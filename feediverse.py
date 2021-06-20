@@ -9,6 +9,7 @@ import argparse
 import urllib3
 import dateutil
 import feedparser
+import textwrap
 
 from bs4 import BeautifulSoup
 from mastodon import Mastodon
@@ -17,6 +18,7 @@ from datetime import datetime, timezone, MINYEAR
 
 DEFAULT_CONFIG_FILE = os.path.join("~", ".feediverse")
 MAX_IMAGES = 4  # Mastodon allows attaching 4 images max.
+NEWLINE = u"\u00B6"  # Unicode "SYMBOL FOR NEWLINE"
 
 http = urllib3.PoolManager(cert_reqs='CERT_REQUIRED',)
 
@@ -71,9 +73,6 @@ def main():
                     print(dict(
                         (k, v.encode("utf-8") if hasattr(v, "encode") else v)
                         for k, v in entry.items()))
-            if args.dry_run:
-                print("trial run, not tooting ", entry["title"][:50])
-                continue
             media_ids = []
             for img in entry.get("images", []):
                 media = masto.media_post(img, img.headers['content-type'])
@@ -81,8 +80,13 @@ def main():
                 if not 'error' in media:
                     media_ids.append(media)
             entry.pop("images", None)
-            masto.status_post(feed['template'].format(**entry)[:499],
-                              media_ids=media_ids)
+            status = shorten(feed['template'].format(**entry))
+            if args.verbose:
+                print('Status:', repr(status))
+            if args.dry_run:
+                print("trial run, not tooting ", entry["title"][:50])
+                continue
+            masto.status_post(status, media_ids=media_ids)
 
     config['updated'] = newest_post.isoformat()
     if args.dry_run:
@@ -222,6 +226,11 @@ def get_entry(entry, include_images, generator=None):
         'images': collect_images(entry, generator) if include_images else [],
         '__generator__': generator,
     }
+
+def shorten(text: str) -> str:
+    """Wrapper around textwrap.shorten that doesn't remove newlines."""
+
+    return textwrap.shorten(text.replace("\n", NEWLINE), width=490).replace(NEWLINE, "\n")
 
 def setup(config_file):
 
