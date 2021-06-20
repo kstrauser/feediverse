@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 
+import argparse
+import codecs
 import os
 import re
 import sys
-import yaml
-import codecs
-import argparse
-import urllib3
+import textwrap
+from datetime import MINYEAR, datetime, timezone
+
 import dateutil
 import feedparser
-import textwrap
-
+import urllib3
+import yaml
 from bs4 import BeautifulSoup
 from mastodon import Mastodon
-from datetime import datetime, timezone, MINYEAR
-
 
 DEFAULT_CONFIG_FILE = os.path.join("~", ".feediverse")
 MAX_IMAGES = 4  # Mastodon allows attaching 4 images max.
