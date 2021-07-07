@@ -2,9 +2,9 @@
 
 import argparse
 import codecs
+import copy
 import os
 import re
-import sys
 import textwrap
 from datetime import MINYEAR, datetime, timezone
 
@@ -17,7 +17,8 @@ from mastodon import Mastodon
 
 DEFAULT_CONFIG_FILE = os.path.join("~", ".feediverse")
 MAX_IMAGES = 4  # Mastodon allows attaching 4 images max.
-NEWLINE = u"\u00B6"  # Unicode "SYMBOL FOR NEWLINE"
+NEWLINE = "\u00B6"  # Unicode "SYMBOL FOR NEWLINE"
+MAX_LENGTH = 490
 
 http = urllib3.PoolManager(
     cert_reqs="CERT_REQUIRED",
@@ -94,11 +95,11 @@ def main():
                 if not "error" in media:
                     media_ids.append(media)
             entry.pop("images", None)
-            status = shorten(feed["template"].format(**entry))
+            status = make_status(feed["template"], entry, MAX_LENGTH)
             if args.verbose:
                 print("Status:", repr(status))
             if args.dry_run:
-                print("trial run, not tooting ", entry["title"][:50])
+                print("trial run, not tooting", entry["title"][:50])
                 continue
             masto.status_post(status, media_ids=media_ids)
 
@@ -109,6 +110,30 @@ def main():
         if args.verbose:
             print("saving the config", config_file)
         save_config(config, config_file)
+
+
+def make_status(template, entry, max_length):
+    """Return a (maybe shortened) status that fits in the requested length."""
+
+    # Simple case: everything fits into the desired template
+    status = template.format(**entry)
+    if len(status) < max_length:
+        return status
+
+    content_keys = ["content", "summary"]
+
+    # Rats. It doesn't fit. See how long the status would be if the summary or content were empty.
+    empty = copy.deepcopy(entry)
+    for key in content_keys:
+        empty[key] = ""
+    max_content_length = max_length - len(template.format(**empty))
+
+    # With that information, shorten the summary and content and try again.
+    shortened = copy.deepcopy(entry)
+    for key in content_keys:
+        shortened[key] = shorten(entry[key], max_content_length)
+
+    return template.format(**shortened)
 
 
 def save_config(config, config_file):
@@ -241,10 +266,10 @@ def get_entry(entry, include_images, generator=None):
     }
 
 
-def shorten(text: str) -> str:
+def shorten(text: str, max_length: int) -> str:
     """Wrapper around textwrap.shorten that doesn't remove newlines."""
 
-    return textwrap.shorten(text.replace("\n", NEWLINE), width=490).replace(NEWLINE, "\n")
+    return textwrap.shorten(text.replace("\n", NEWLINE), width=max_length).replace(NEWLINE, "\n")
 
 
 def setup(config_file):
