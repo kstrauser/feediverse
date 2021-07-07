@@ -3,6 +3,7 @@
 import argparse
 import codecs
 import copy
+import logging
 import os
 import re
 import textwrap
@@ -19,6 +20,8 @@ DEFAULT_CONFIG_FILE = os.path.join("~", ".feediverse")
 MAX_IMAGES = 4  # Mastodon allows attaching 4 images max.
 NEWLINE = "\u00B6"  # Unicode "SYMBOL FOR NEWLINE"
 MAX_LENGTH = 490
+
+LOGGER = logging.getLogger(__name__)
 
 http = urllib3.PoolManager(
     cert_reqs="CERT_REQUIRED",
@@ -42,7 +45,7 @@ def main():
         action="store_true",
         help=("perform a trial run with no changes made: " "don't toot, don't save config"),
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="be verbose")
+    parser.add_argument("-v", "--verbose", action="count", help="increase verbosity", default=0)
     parser.add_argument(
         "-c",
         "--config",
@@ -51,10 +54,18 @@ def main():
     )
 
     args = parser.parse_args()
+
+    log_level = logging.WARNING
+    if args.verbose == 1:
+        log_level = logging.INFO
+    if args.verbose > 1:
+        log_level = logging.DEBUG
+
+    logging.basicConfig(level=log_level)
+
     config_file = args.config
 
-    if args.verbose:
-        print("using config file", config_file)
+    LOGGER.info("using config file %r", config_file)
 
     if not os.path.isfile(config_file):
         setup(config_file)
@@ -77,17 +88,17 @@ def main():
             generator=feed.get("generator"),
         ):
             newest_post = max(newest_post, entry["updated"])
-            if args.verbose:
-                try:
-                    print(entry)
-                except UnicodeEncodeError:
-                    # work-around for non-unicode terminals
-                    print(
-                        dict(
-                            (k, v.encode("utf-8") if hasattr(v, "encode") else v)
-                            for k, v in entry.items()
-                        )
-                    )
+            try:
+                LOGGER.debug("entry: %r", entry)
+            except UnicodeEncodeError:
+                # work-around for non-unicode terminals
+                LOGGER.debug(
+                    "entry: %r",
+                    dict(
+                        (k, v.encode("utf-8") if hasattr(v, "encode") else v)
+                        for k, v in entry.items()
+                    ),
+                )
             media_ids = []
             for img in entry.get("images", []):
                 media = masto.media_post(img, img.headers["content-type"])
@@ -96,19 +107,18 @@ def main():
                     media_ids.append(media)
             entry.pop("images", None)
             status = make_status(feed["template"], entry, MAX_LENGTH)
-            if args.verbose:
-                print("Status:", repr(status))
+            LOGGER.debug("status: %r", status)
             if args.dry_run:
-                print("trial run, not tooting", entry["title"][:50])
+                LOGGER.info("trial run, not tooting %r", entry["title"][:50])
                 continue
+            LOGGER.info("posting %r, %r", status[:50], media_ids)
             masto.status_post(status, media_ids=media_ids)
 
     config["updated"] = newest_post.isoformat()
     if args.dry_run:
-        print("trial run, not saving the config")
+        LOGGER.info("trial run, not saving the config")
     else:
-        if args.verbose:
-            print("saving the config", config_file)
+        LOGGER.debug("saving the config %r", config_file)
         save_config(config, config_file)
 
 
@@ -118,6 +128,7 @@ def make_status(template, entry, max_length):
     # Simple case: everything fits into the desired template
     status = template.format(**entry)
     if len(status) < max_length:
+        LOGGER.debug("no need to shorten the status")
         return status
 
     content_keys = ["content", "summary"]
@@ -127,13 +138,16 @@ def make_status(template, entry, max_length):
     for key in content_keys:
         empty[key] = ""
     max_content_length = max_length - len(template.format(**empty))
+    LOGGER.debug("maximum content length: %s", max_content_length)
 
     # With that information, shorten the summary and content and try again.
     shortened = copy.deepcopy(entry)
     for key in content_keys:
         shortened[key] = shorten(entry[key], max_content_length)
 
-    return template.format(**shortened)
+    status = template.format(**shortened)
+    LOGGER.debug("shortened status length: %s", len(status))
+    return status
 
 
 def save_config(config, config_file):
