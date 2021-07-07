@@ -1,5 +1,6 @@
-dist
+build/
+dist/
 feediverse.egg-info
-Pipfile*
 __pycache__
-.config.yml.swp
+.venv/
+.mypy_cache/
